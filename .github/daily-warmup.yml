@@ -1,0 +1,48 @@
+name: RunStreak 每日预热
+
+on:
+  schedule:
+    # 奥克兰时间 每天 08:00
+    # ───────────────────────────────────────────────
+    # GitHub Actions 的 cron 使用 UTC，且不支持自动换算新西兰夏令时。
+    # 新西兰时区：冬季 NZST = UTC+12，夏季 NZDT = UTC+13。
+    #
+    # 冬季（约 4 月第一个周日至 9 月最后一个周日，UTC+12）：
+    #   奥克兰 08:00 = UTC 前一天 20:00  →  "0 20 * * *"
+    # 夏季（约 9 月最后一个周日至次年 4 月第一个周日，UTC+13）：
+    #   奥克兰 08:00 = UTC 前一天 19:00  →  "0 19 * * *"
+    #
+    # 当前（NZST 冬季）使用下面这行：
+    - cron: "0 20 * * *"
+    # 夏令时开始后，请把上面一行改成：  - cron: "0 19 * * *"
+    # ───────────────────────────────────────────────
+  workflow_dispatch: {}   # 允许在 Actions 页面手动触发测试
+
+permissions:
+  contents: read
+
+jobs:
+  warmup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装 Playwright 与 Chromium
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: 运行预热脚本
+        run: python warmup.py
+
+      - name: 结果通知（仅失败时）
+        if: failure()
+        run: echo "::error::RunStreak 预热失败，请检查脚本或网站状态。"
