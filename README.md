@@ -1,55 +1,71 @@
-# runstreak-warmup
-# RunStreak 每日预热（避免 Azure 冷启动）
+# RunStreak Daily Warmup
 
-每天奥克兰时间早上 8:00 自动打开一次 [runstreak.sheng.nz](https://runstreak.sheng.nz/)  
-并完成登录流程，让 Azure 后端保持"热身"状态，这样后续真人访问时就不会碰到  
-1~2 分钟的冷启动延迟。
+Automated daily warmup tool for [runstreak.sheng.nz](https://runstreak.sheng.nz/) to eliminate Azure backend cold-start delays.
 
-> 本方案**只做登录访问、不写入任何跑步记录**，纯粹用于预热后端。
+---
 
-## 工作流程
+## Overview
 
-GitHub Actions 在定时触发后：
+The backend for **RunStreak** is hosted on Azure. When idle, the backend instance scales down to save resources, causing a **1-2 minute cold-start delay** on the first visit of the day.
 
-1. 启动一个 Ubuntu 环境 + 无头 Chromium
-2. 打开网站首页
-3. 点击首页的 **MSA Marker Demo** 按钮（会自动填入 test 账号并弹出登录框）
-4. 在登录框内点击 **Sign In** 完成登录，进入 dashboard
-5. 等待 dashboard 完全加载（含冷启动缓冲），后端即被预热
+This repository runs an automated headless browser task every morning at **08:00 AM Auckland Time (New Zealand)**. It navigates to the website, executes the demo login workflow, and waits for the dashboard and backend APIs to fully initialize. Subsequent visits by users will be fast and responsive with zero cold start.
 
-## 文件说明
+> **Note:** This process performs read and authentication operations only; it **does not create or modify any run logs**.
 
-| 文件                                   | 作用                         |
-| ------------------------------------ | -------------------------- |
-| `warmup.py`                          | Playwright 预热脚本，执行完整登录流程   |
-| `.github/workflows/daily-warmup.yml` | 每天定时触发的 GitHub Actions 工作流 |
+---
 
-## 部署步骤
+## Workflow
 
-1. 把这个仓库（含 `warmup.py` 和 `.github/workflows/`）推送到你的 GitHub 仓库。
-2. 进入仓库 **Settings → Actions → General**，确认  
-   `Allow all actions and reusable workflows` 已开启。
-3. 在 **Actions** 标签页里，手动触发一次 `RunStreak 每日预热` 验证能跑通（用 `workflow_dispatch`）。
-4. 之后每天会自动运行，无需人工干预。
+When triggered by GitHub Actions on schedule:
 
-## 时区与夏令时（重要）
+1. **Launches an Ubuntu environment** with headless Chromium.
+2. **Navigates to the homepage** (`https://runstreak.sheng.nz/`).
+3. **Opens the demo login modal** by clicking `MSA Marker Demo`.
+4. **Submits credentials** via `Sign In` to authenticate.
+5. **Waits for dashboard rendering**, ensuring the Azure container and database are fully active and warm.
 
-GitHub Actions 的 `cron` 使用 **UTC**，且不能自动切换新西兰夏令时。当前工作流里  
-写的是冬季时间：
+---
 
-- **冬季 NZST（UTC+12）**：奥克兰 08:00 = UTC 20:00 → `0 20 * * *`（当前生效）
-- **夏季 NZDT（UTC+13）**：奥克兰 08:00 = UTC 19:00 → 需改为 `0 19 * * *`
+## Repository Structure
 
-新西兰夏令时大致区间：**每年 9 月最后一个周日 → 次年 4 月第一个周日**。  
-进入夏令时时，请手动把 `daily-warmup.yml` 里的 cron 从 `0 20 * * *` 改成 `0 19 * * *`，  
-次年转回冬季时再改回来。
+| File | Description |
+| :--- | :--- |
+| [`warmup.py`](file:///d:/Dev/runstreak-warmup/warmup.py) | Playwright automation script executing the warmup sequence |
+| [`.github/workflows/daily-warmup.yml`](file:///d:/Dev/runstreak-warmup/.github/workflows/daily-warmup.yml) | Scheduled GitHub Actions workflow running daily at 08:00 AM NZ time |
 
-## 本地测试
+---
+
+## Setup & Deployment
+
+1. **Push this repository** (including `warmup.py` and `.github/workflows/daily-warmup.yml`) to GitHub.
+2. Go to **Settings -> Actions -> General** in your GitHub repository and ensure **"Allow all actions and reusable workflows"** is enabled.
+3. In the **Actions** tab, select **Daily Warmup** and click **Run workflow** (`workflow_dispatch`) to verify the execution.
+4. The workflow will run automatically every day at 08:00 AM NZ time without requiring manual intervention.
+
+---
+
+## Timezone & Daylight Saving Time (NZST / NZDT)
+
+GitHub Actions cron expressions operate in **UTC**:
+
+- **NZST (Standard / Winter Time, UTC+12)**: 08:00 AM NZ = 20:00 UTC (previous day) -> `0 20 * * *` *(Active)*
+- **NZDT (Daylight Saving / Summer Time, UTC+13)**: 08:00 AM NZ = 19:00 UTC (previous day) -> `0 19 * * *`
+
+> **Note:** New Zealand Daylight Saving Time typically begins on the last Sunday of September and ends on the first Sunday of April. When daylight saving begins, switch the cron expression in [`.github/workflows/daily-warmup.yml`](file:///d:/Dev/runstreak-warmup/.github/workflows/daily-warmup.yml) to `0 19 * * *`.
+
+---
+
+## Local Development & Testing
 
 ```bash
+# Install dependencies
 pip install playwright
 playwright install chromium
+
+# Run warmup script
 python warmup.py
 ```
 
-退出码：成功为 `0`，失败为 `1`（可在 CI 中据此报警）。
+Exit codes:
+- `0`: Success (page and backend reached and verified).
+- `1`: Failure (exception encountered or timeout exceeded).

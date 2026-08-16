@@ -1,0 +1,47 @@
+name: Daily Warmup
+
+on:
+  schedule:
+    # 08:00 AM Auckland Time (New Zealand)
+    # -------------------------------------------------------------
+    # GitHub Actions cron expressions use UTC.
+    # New Zealand uses two time standards:
+    # - NZST (Winter / Standard Time, UTC+12): 08:00 NZST = 20:00 UTC (previous day) -> "0 20 * * *"
+    # - NZDT (Summer / Daylight Saving Time, UTC+13): 08:00 NZDT = 19:00 UTC (previous day) -> "0 19 * * *"
+    #
+    # Active schedule (NZST Standard Time):
+    - cron: "0 20 * * *"
+    # When Daylight Saving Time begins (late September), update to: - cron: "0 19 * * *"
+    # -------------------------------------------------------------
+  workflow_dispatch: {} # Allows manual triggering from the Actions tab
+
+permissions:
+  contents: read
+
+jobs:
+  warmup:
+    name: Run Warmup Task
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Execute warmup script
+        run: python warmup.py
+
+      - name: Report failure
+        if: failure()
+        run: echo "::error::RunStreak warmup failed. Please check script logs or website health."

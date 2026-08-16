@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-RunStreak 每日预热脚本
-======================
-目的：每天自动打开一次 runstreak.sheng.nz 并完成登录流程，
-      让 Azure 后端保持"热身"状态，避免后续真人访问时遇到冷启动延迟。
+RunStreak Daily Warmup Script
+=============================
+Purpose: Automatically open and log into runstreak.sheng.nz once a day
+         to eliminate Azure backend cold start latency (~1-2 minutes)
+         for subsequent real users.
 
-流程：
-  1. 打开 https://runstreak.sheng.nz/
-  2. 点击首页 "MSA Marker Demo" 按钮（触发登录框，并自动填入 test 账号）
-  3. 在弹出的登录框内点击 "Sign In" 完成登录
-  4. 等待 dashboard 加载完成（后端被预热）
+Flow:
+  1. Open https://runstreak.sheng.nz/ and wait up to 3 minutes for initial cold start.
+  2. Wait for interactive elements (demo button, sign in button, or dashboard) to render.
+  3. If not already authenticated, trigger demo login and submit credentials.
+  4. Wait for dashboard to finish loading and confirm the backend is warmed up.
 
-注意：本脚本不写入任何跑步记录（Log Run），仅做登录访问以预热后端。
+Note: This script performs read/login operations only and does not create or modify run records.
 """
 
 import sys
@@ -20,9 +21,9 @@ from playwright.sync_api import sync_playwright
 
 BASE_URL = "https://runstreak.sheng.nz/"
 
-# 登录后最多等待 dashboard 就绪的秒数（含 Azure 冷启动缓冲）
+# Timeouts in seconds (allowing ample time for Azure cold starts)
+COLD_START_TIMEOUT = 180
 LOGIN_TIMEOUT = 120
-PAGE_READY_TIMEOUT = 180
 
 
 def log(msg: str) -> None:
@@ -41,61 +42,58 @@ def warmup() -> bool:
             )
         )
         page = context.new_page()
-        page.set_default_timeout(PAGE_READY_TIMEOUT * 1000)
+        # Set default timeout to 180s to accommodate cold start delays across all actions
+        page.set_default_timeout(COLD_START_TIMEOUT * 1000)
 
         try:
-            log("1) 打开首页 ...")
-            page.goto(BASE_URL, wait_until="domcontentloaded")
-            page.wait_for_timeout(2000)
-            log(f"   当前 URL: {page.url}")
+            log("Step 1: Navigating to home page (waiting for initial cold start)...")
+            page.goto(BASE_URL, wait_until="load", timeout=COLD_START_TIMEOUT * 1000)
 
-            # 如果已经登录（直接进了 dashboard），则无需再登录
-            if "/login" not in page.url:
-                log("   已在 dashboard，无需登录，后端已热身。")
+            log("   Waiting for interactive UI to render after backend cold boot...")
+            # Wait for either login interactive buttons or dashboard elements to appear (up to 180s)
+            interactive_target = page.locator(
+                "button:has-text('MSA Marker Demo'), button:has-text('Sign In'), :text('Test Runner')"
+            ).first
+            interactive_target.wait_for(timeout=COLD_START_TIMEOUT * 1000)
+            log(f"   UI rendered. Current URL: {page.url}")
+
+            # If already authenticated and dashboard is present, warmup is complete
+            if page.locator(":text('Test Runner')").count() > 0 or ("/login" not in page.url and page.locator("button:has-text('MSA Marker Demo')").count() == 0):
+                log("   [SUCCESS] Already on dashboard. Azure backend is warm.")
                 browser.close()
                 return True
 
-            # 2) 点击 "MSA Marker Demo" 触发登录框（自动填充 test 账号）
-            log("2) 点击 'MSA Marker Demo' ...")
-            page.click('button:has-text("MSA Marker Demo")')
-            page.wait_for_timeout(1500)
+            # Step 2: Trigger demo login modal
+            log("Step 2: Clicking 'MSA Marker Demo' button...")
+            page.click("button:has-text('MSA Marker Demo')", timeout=COLD_START_TIMEOUT * 1000)
+            page.wait_for_timeout(1000)
 
-            # 校验自动填充是否生效
-            filled = page.evaluate(
-                """() => {
-                    const e = document.querySelector('#login-email')
-                             || document.querySelector('input[name=email],input[name=username],input[type=email],input[type=text]');
-                    const pw = document.querySelector('#login-password')
-                             || document.querySelector('input[type=password]');
-                    return { email: e ? e.value : null, pw: pw ? pw.value : null };
-                }"""
-            )
-            log(f"   登录框自动填充: email={filled.get('email')!r} pw={'***' if filled.get('pw') else None}")
+            # Ensure credentials are populated, fallback if not
+            email_input = page.locator("#login-email")
+            if email_input.count() > 0 and not email_input.input_value():
+                log("   Notice: Auto-fill empty, manually providing demo credentials...")
+                page.fill("#login-email", "testuser")
+                page.fill("#login-password", "Test1234!")
 
-            # 3) 在登录框(modal)内点击 "Sign In"
-            log("3) 在登录框内点击 'Sign In' ...")
-            modal_signin = page.locator('.fixed.inset-0 button:has-text("Sign In")').last
-            modal_signin.click()
-            log("   等待 dashboard 加载（含 Azure 冷启动缓冲）...")
-            page.wait_for_timeout(LOGIN_TIMEOUT * 1000)
+            # Step 3: Click "Sign In" in the modal
+            log("Step 3: Clicking 'Sign In' inside the login modal...")
+            modal_signin = page.locator(".fixed.inset-0 button:has-text('Sign In')").last
+            modal_signin.click(timeout=COLD_START_TIMEOUT * 1000)
 
-            final_url = page.url
-            log(f"   登录后 URL: {final_url}")
+            log("   Waiting for dashboard transition (accommodating backend auth delay)...")
+            page.wait_for_url(lambda u: "/login" not in u, timeout=LOGIN_TIMEOUT * 1000)
+            log(f"   Post-login URL: {page.url}")
 
-            if "/login" in final_url:
-                log("   ⚠ 仍处于登录页，登录可能未成功。")
-                browser.close()
-                return False
-
-            # 4) 确认 dashboard 关键内容已渲染
-            log("4) 校验 dashboard 已加载 ...")
-            page.wait_for_selector('text=Test Runner', timeout=PAGE_READY_TIMEOUT * 1000)
-            log("   ✅ dashboard 加载完成，后端已热身。")
+            # Step 4: Verify dashboard key element rendered
+            log("Step 4: Verifying dashboard content rendered...")
+            dashboard_element = page.locator(":text('Test Runner')").first
+            dashboard_element.wait_for(timeout=COLD_START_TIMEOUT * 1000)
+            log("   [SUCCESS] Dashboard loaded successfully. Azure backend is warm.")
             browser.close()
             return True
 
         except Exception as e:
-            log(f"   ❌ 发生异常: {e}")
+            log(f"   [ERROR] Warmup failed: {e}")
             try:
                 browser.close()
             except Exception:
@@ -104,5 +102,5 @@ def warmup() -> bool:
 
 
 if __name__ == "__main__":
-    ok = warmup()
-    sys.exit(0 if ok else 1)
+    success = warmup()
+    sys.exit(0 if success else 1)
