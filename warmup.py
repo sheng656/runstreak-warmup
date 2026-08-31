@@ -81,7 +81,13 @@ def warmup() -> bool:
             modal_signin.click(timeout=COLD_START_TIMEOUT * 1000)
 
             log("   Waiting for dashboard transition (accommodating backend auth delay)...")
-            page.wait_for_url(lambda u: "/login" not in u, timeout=LOGIN_TIMEOUT * 1000)
+            # SPA client-side routing (pushState) never fires a 'load' event, so poll the URL
+            # instead of using page.wait_for_url(), which waits for a navigation/load event.
+            deadline = time.monotonic() + LOGIN_TIMEOUT
+            while "/login" in page.url:
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"Timed out waiting to leave /login after {LOGIN_TIMEOUT}s")
+                page.wait_for_timeout(500)
             log(f"   Post-login URL: {page.url}")
 
             # Step 4: Verify dashboard key element rendered
